@@ -31,7 +31,7 @@ public class Response {
                 int ch = fis.read(bytes, 0, BUFFER_SIZE);
 
                 //源代码中没有下面这段话，导致请求会出现错误。现在添加。
-                String msg = "HTTP/1.1 404 File Not Found\r\n" +
+                String msg = "HTTP/1.1 200 OK\r\n" +
                         "Content-Type: text/html\r\n" +
                         "\r\n";
                 output.write(msg.getBytes());

@@ -1,7 +1,6 @@
 package com.ex02.pyrmont;
 
 import javax.servlet.Servlet;
-import javax.servlet.ServletException;
 import java.io.File;
 import java.io.IOException;
 import java.net.URL;
@@ -11,7 +10,7 @@ import java.net.URLStreamHandler;
 /**
  * Created by laiwenqiang on 2017/5/16.
  */
-public class ServletProcessor1 {
+public class ServletProcessor2 {
     //接收request，处理业务后，返回response
     public void process(Request request, Response response) {
 
@@ -45,13 +44,17 @@ public class ServletProcessor1 {
             e.printStackTrace();
         }
 
+        //这里和ServletProcessor1不同，运用外观设计模式
         Servlet servlet = null;
+        RequestFacade requestFacade = new RequestFacade(request);
+        ResponseFacade responseFacade = new ResponseFacade(response);
+
         try {
             servlet = (Servlet) myClass.newInstance();
 
             //3. 调用Servlet的service方法
 
-            servlet.service(request, response);
+            servlet.service(requestFacade, responseFacade);
         } catch (Exception e) {
             e.printStackTrace();
         }
