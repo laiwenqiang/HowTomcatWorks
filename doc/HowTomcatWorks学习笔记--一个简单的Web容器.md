@@ -259,7 +259,7 @@ public class Request {
 ## **封装相应**
 这个返回Response的类，主要功能在sendStaticResource方法里。原理就是拼接HTTP Response相应。如果存在该文件，则读取文件内容，然后往OutputStream里面放；不存在的话，就返回一个404。
 
-<font color=blue>*** 我的电脑是mac操作系统，在浏览器上测试会出现异常错误。原因还未知。故添加一个返回的相应头。***</font>
+<font color=blue>*** 我的电脑是mac操作系统，在浏览器上测试会出现异常错误。原因还未知。故添加一个返回的相应头。 ***</font>
 ```java
 import java.io.File;
 import java.io.FileInputStream;
