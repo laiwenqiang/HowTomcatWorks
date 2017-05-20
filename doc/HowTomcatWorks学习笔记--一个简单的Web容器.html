@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HowTomcatWorks学习笔记--一个简单的Web容器</title>
+<link rel="stylesheet" href="https://stackedit.io/res-min/themes/base.css" />
+<script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>
+</head>
+<body><div class="container"><blockquote>
+  <p>这本书(How Tomcat Works <a href="https://github.com/laiwenqiang/HowTomcatWorks/blob/master/doc/how%20tomcat%20works中文版.pdf">中文下载地址</a>)之前就看过，然而也就开了个头就废弃了，所以一直耿耿于怀。这次决定重新开始，在此记录一些学习心得和本书的主要知识点。所有代码也将托管在<a href="https://github.com/laiwenqiang/HowTomcatWorks">GitHub</a>上面。O(∩_∩)O</p>
+</blockquote>
+
+<p>本章节，简要介绍HTTP协议，并且实现一个简陋的web服务器。 <br>
+主要运用到java.net.Socket和java.net.ServerSocket，并且通过Http消息和客户端进行通信。</p>
+
+<hr>
+
+<h1 id="http协议"><strong>HTTP协议</strong></h1>
+
+<p>（基本上是书上的概念搬过来。）</p>
+
+
+
+<h2 id="http-request"><strong>HTTP Request</strong></h2>
+
+<p>一个HTTP请求，包含三部分： <br>
+1. Method–URI–Protocol/version <br>
+2. Request headers <br>
+3. Entity body</p>
+
+<p>例如：</p>
+
+
+
+<pre class="prettyprint"><code class="language-http hljs "><span class="hljs-attribute">POST /examples/default.jsp HTTP/1.1 Accept</span>: <span class="hljs-string">text/plain; text/html Accept-Language: en-gb</span>
+<span class="hljs-attribute">Connection</span>: <span class="hljs-string">Keep-Alive</span>
+<span class="hljs-attribute">Host</span>: <span class="hljs-string">localhost</span>
+<span class="hljs-attribute">User-Agent</span>: <span class="hljs-string">Mozilla/4.0 (compatible; MSIE 4.01; Windows 98) Content-Length: 33</span>
+<span class="hljs-attribute">Content-Type</span>: <span class="hljs-string">application/x-www-form-urlencoded Accept-Encoding: gzip, deflate</span>
+
+<span class="fix"><span class="hljs-attribute">lastName</span>=<span class="hljs-string">Franks&amp;firstName=Michael</span></span></code></pre>
+
+<p>请求方法包括：GET、POST、HEAD、OPTIONS、PUT、DELETE 和 TRACE。</p>
+
+<p>URI 指明了请求资源的地址，通常是从网站更目录开始计算的一个相对路径，因此它总是以斜线“ /”开头的。 <br>
+URL 实际上是 URI 的一种类型。</p>
+
+<p>请求头(header)中包含了一些关于客户端环境和请求实体(entity)的有用的信息。 <br>
+例如，客户端浏览器所使用的语言，请求实体信息的长度等。 <br>
+每个请求头使用 CRLF(回车换行符，“\r\n”)分隔。</p>
+
+<p>注意请求头的格式: <br>
+请求头名+英文空格+请求头值</p>
+
+<p>请求头和请求实体之间有一个空白行(CRLF)。这是 HTTP 协议规定的格式。HTTP 服务器，以此确定请求实体是从哪里开始的。</p>
+
+<p>上面的例子中，请求实体是: <br>
+<code>lastName=Franks&amp;firstName=Michael</code></p>
+
+<h2 id="http-response"><strong>HTTP Response</strong></h2>
+
+<p>HTTP Response也有三部分， <br>
+1. Protocol–Status Code –Description <br>
+2. Response heads <br>
+3. Entity body</p>
+
+<p>例如：</p>
+
+
+
+<pre class="prettyprint"><code class="language-http hljs "><span class="hljs-status">HTTP/1.1 <span class="hljs-number">200</span> OK</span>
+<span class="hljs-attribute">Server</span>: <span class="hljs-string">Microsoft-IIS/4.0</span>
+<span class="hljs-attribute">Date</span>: <span class="hljs-string">Mon, 5 Jan 2004 13:13:33 GMT Content-Type: text/html</span>
+<span class="hljs-attribute">Last-Modified</span>: <span class="hljs-string">Mon, 5 Jan 2004 13:13:12 GMT Content-Length: 112</span>
+&lt;<span class="hljs-attribute">html&gt;
+&lt;head&gt;
+&lt;title&gt;HTTP Response Example&lt;/title&gt; &lt;/head&gt;
+&lt;body&gt;
+Welcome to Brainy Software
+&lt;/body&gt;
+&lt;/html&gt;</span></code></pre>
+
+<p>注意响应实体(entity)与响应头(header)之间有一个空白行(CRLF)。</p>
+
+<hr>
+
+
+
+<h1 id="socket和serversocket"><strong>Socket和ServerSocket</strong></h1>
+
+<p>Socket类表示一个客户端，而ServerSocket表示一个服务端。连接的流程如下， <br>
+1. 在服务端建立ServerSocket，等待请求。 <br>
+2. 一旦请求来，则创建一个Socket连接，进行通信。</p>
+
+<hr>
+
+
+
+<h1 id="简陋的web服务器"><strong>简陋的web服务器</strong></h1>
+
+<p>这里我们创建一个服务器，功能很简单，就是在浏览器上显示几句话。我们用到上面HTTP Response的例子，返回“Welcome to Brainy Software”这句话。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.OutputStream;
+<span class="hljs-keyword">import</span> java.net.InetAddress;
+<span class="hljs-keyword">import</span> java.net.ServerSocket;
+<span class="hljs-keyword">import</span> java.net.Socket;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/16.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">SimpleServer</span> {</span>
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span>(String[] args)  {
+
+        ServerSocket serverSocket = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">int</span> port = <span class="hljs-number">8080</span>;
+        <span class="hljs-keyword">try</span> {
+            serverSocket = <span class="hljs-keyword">new</span> ServerSocket(port, <span class="hljs-number">1</span>, InetAddress.getByName(<span class="hljs-string">"127.0.0.1"</span>));
+        }  <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+            System.exit(<span class="hljs-number">1</span>);
+        }
+
+        <span class="hljs-keyword">while</span>(<span class="hljs-keyword">true</span>){
+            Socket socket = <span class="hljs-keyword">null</span>;
+            OutputStream outputStream = <span class="hljs-keyword">null</span>;
+
+            <span class="hljs-keyword">try</span> {
+                socket = serverSocket.accept();
+                outputStream = socket.getOutputStream();
+
+                String msg = <span class="hljs-string">"HTTP/1.1 200 OK\r\n"</span> +
+                        <span class="hljs-string">"Content-Type: text/html\r\n"</span> +
+                        <span class="hljs-string">"\r\n"</span> +
+                        <span class="hljs-string">"&lt;html&gt;\r\n"</span> +
+                        <span class="hljs-string">"&lt;head&gt;\r\n"</span> +
+                        <span class="hljs-string">"&lt;title&gt;HTTP Response Example&lt;/title&gt;\r\n"</span> +
+                        <span class="hljs-string">"&lt;/head&gt;\r\n"</span> +
+                        <span class="hljs-string">"&lt;body&gt;\r\n"</span> +
+                        <span class="hljs-string">"Welcome to Brainy Software\r\n"</span> +
+                        <span class="hljs-string">"&lt;/body&gt;\r\n"</span> +
+                        <span class="hljs-string">"&lt;/html&gt;"</span>;
+                outputStream.write(msg.getBytes());
+
+                Thread.sleep(<span class="hljs-number">50</span>);<span class="hljs-comment">//由于是阻塞写入，暂停 50ms，保证可以写入。</span>
+
+                socket.close();
+
+            } <span class="hljs-keyword">catch</span> (Exception e) {
+                e.printStackTrace();
+                <span class="hljs-keyword">continue</span>;
+            }
+        }
+    }
+}</code></pre>
+
+<p><font color="red">上面的休眠50毫秒，是必要的。如果没有那段代码的话，客户端可能会接收不到返回的数据。</font></p>
+
+<p>运行后，我们在浏览器输入：<a href="http://127.0.0.1:8080">http://127.0.0.1:8080</a>，得到结果：</p>
+
+
+
+<pre class="prettyprint"><code class=" hljs fsharp">Welcome <span class="hljs-keyword">to</span> Brainy Software</code></pre>
+
+<hr>
+
+
+
+<h1 id="稍微复杂一点的web服务器"><strong>稍微复杂一点的web服务器</strong></h1>
+
+<p>这个就是书上的例子，和上面的代码本质上是一样的，区别在于他把请求和相应做了封装。功能上也有所不同，他请求webroot目录下的文件，如果不存在返回404。</p>
+
+
+
+<h2 id="创建服务端"><strong>创建服务端</strong></h2>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">import</span> java.io.File;
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.InputStream;
+<span class="hljs-keyword">import</span> java.io.OutputStream;
+<span class="hljs-keyword">import</span> java.net.InetAddress;
+<span class="hljs-keyword">import</span> java.net.ServerSocket;
+<span class="hljs-keyword">import</span> java.net.Socket;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/16.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">HttpServer</span> {</span>
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String WEB_ROOT = System.getProperty(<span class="hljs-string">"user.dir"</span>) + File.separator + <span class="hljs-string">"webroot"</span>;
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">boolean</span> shutdown = <span class="hljs-keyword">false</span>;
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String SHUTDOWN_COMMAND = <span class="hljs-string">"/SHUTDOWN"</span>;
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span>(String[] args) {
+        HttpServer server = <span class="hljs-keyword">new</span> HttpServer();
+        server.await();
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">await</span>(){
+        ServerSocket serverSocket = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">int</span> port = <span class="hljs-number">8080</span>;
+        <span class="hljs-keyword">try</span> {
+            serverSocket = <span class="hljs-keyword">new</span> ServerSocket(port, <span class="hljs-number">1</span>, InetAddress.getByName(<span class="hljs-string">"127.0.0.1"</span>));
+        }  <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+            System.exit(<span class="hljs-number">1</span>);
+        }
+        <span class="hljs-keyword">while</span>(!shutdown){
+            Socket socket = <span class="hljs-keyword">null</span>;
+            InputStream inputStream = <span class="hljs-keyword">null</span>;
+            OutputStream outputStream = <span class="hljs-keyword">null</span>;
+
+            <span class="hljs-keyword">try</span> {
+                socket = serverSocket.accept();
+                inputStream = socket.getInputStream();
+                outputStream = socket.getOutputStream();
+
+                Request request = <span class="hljs-keyword">new</span> Request(inputStream);
+                request.parse();
+                Response response = <span class="hljs-keyword">new</span> Response(outputStream);
+                response.setRequest(request);
+                response.sendStaticResource();
+                socket.close();
+
+                <span class="hljs-comment">//request.getUri可能会返回null值。由于做了异常处理，所以循环会继续。</span>
+                shutdown = request.getUri().equals(SHUTDOWN_COMMAND);
+            } <span class="hljs-keyword">catch</span> (Exception e) {
+                e.printStackTrace();
+                <span class="hljs-keyword">continue</span>;
+            }
+        }
+    }
+}</code></pre>
+
+
+
+<h2 id="封装请求"><strong>封装请求</strong></h2>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.InputStream;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/16.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Request</span> {</span>
+    <span class="hljs-keyword">private</span> InputStream inputStream;
+    <span class="hljs-keyword">private</span> String uri;
+
+    <span class="hljs-keyword">public</span> <span class="hljs-title">Request</span>(InputStream inputStream) {
+        <span class="hljs-keyword">this</span>.inputStream = inputStream;
+    }
+
+    <span class="hljs-comment">//从输入流中获取uri</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">parse</span>() {
+        StringBuffer request = <span class="hljs-keyword">new</span> StringBuffer(<span class="hljs-number">2048</span>);
+        <span class="hljs-keyword">int</span> i;
+        <span class="hljs-keyword">byte</span>[] buffer = <span class="hljs-keyword">new</span> <span class="hljs-keyword">byte</span>[<span class="hljs-number">2048</span>];
+        <span class="hljs-keyword">try</span> {
+            i = inputStream.read(buffer);
+        } <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+            <span class="hljs-comment">//i = -1时，下面for循环条件则不会成立。</span>
+            i = -<span class="hljs-number">1</span>;
+        }
+        <span class="hljs-keyword">for</span>(<span class="hljs-keyword">int</span> j=<span class="hljs-number">0</span>; j&lt;i; j++){
+            request.append((<span class="hljs-keyword">char</span>)buffer[j]);
+        }
+        System.out.println(request.toString());
+        uri = parseUri(request.toString());
+    }
+
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getUri</span>() {
+        <span class="hljs-keyword">return</span> uri;
+    }
+
+    <span class="hljs-comment">//获取Uri</span>
+    <span class="hljs-keyword">private</span> String <span class="hljs-title">parseUri</span>(String requestString){
+        <span class="hljs-keyword">int</span> index1,index2;
+        index1 = requestString.indexOf(<span class="hljs-string">' '</span>);
+        <span class="hljs-keyword">if</span>(index1 != -<span class="hljs-number">1</span>){
+            index2 = requestString.indexOf(<span class="hljs-string">' '</span>, index1 + <span class="hljs-number">1</span>);
+            <span class="hljs-keyword">if</span>(index2 &gt; index1){
+                <span class="hljs-keyword">return</span> requestString.substring(index1 + <span class="hljs-number">1</span>, index2);
+            }
+        }
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+}</code></pre>
+
+
+
+<h2 id="封装相应"><strong>封装相应</strong></h2>
+
+<p>这个返回Response的类，主要功能在sendStaticResource方法里。原理就是拼接HTTP Response相应。如果存在该文件，则读取文件内容，然后往OutputStream里面放；不存在的话，就返回一个404。</p>
+
+<p><font color="blue"><strong><em>我的电脑是mac操作系统，在浏览器上测试会出现异常错误。原因还未知。故添加一个返回的相应头。</em></strong></font></p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">import</span> java.io.File;
+<span class="hljs-keyword">import</span> java.io.FileInputStream;
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.OutputStream;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/16.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Response</span> {</span>
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-keyword">int</span> BUFFER_SIZE = <span class="hljs-number">1024</span>;
+    <span class="hljs-keyword">private</span> OutputStream output;
+    <span class="hljs-keyword">private</span> Request request;
+
+    <span class="hljs-keyword">public</span> <span class="hljs-title">Response</span>(OutputStream outputStream) {
+        <span class="hljs-keyword">this</span>.output = outputStream;
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setRequest</span>(Request request) {
+        <span class="hljs-keyword">this</span>.request = request;
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">sendStaticResource</span>() <span class="hljs-keyword">throws</span> IOException {
+        FileInputStream fileInputStream = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">byte</span>[] bytes = <span class="hljs-keyword">new</span> <span class="hljs-keyword">byte</span>[BUFFER_SIZE];
+        <span class="hljs-keyword">try</span> {
+            <span class="hljs-comment">//获取request中的uri，找到对应的文件。</span>
+            File file = <span class="hljs-keyword">new</span> File(HttpServer.WEB_ROOT, request.getUri());
+            <span class="hljs-keyword">if</span>(file.exists()){
+
+                fileInputStream = <span class="hljs-keyword">new</span> FileInputStream(file);
+
+                <span class="hljs-comment">//源代码中没有下面这段话，导致请求可能会出现错误。现在添加。</span>
+                String msg = <span class="hljs-string">"HTTP/1.1 404 File Not Found\r\n"</span> +
+                        <span class="hljs-string">"Content-Type: text/html\r\n"</span> +
+                        <span class="hljs-string">"\r\n"</span>;
+                output.write(msg.getBytes());
+
+                <span class="hljs-keyword">while</span>(i != -<span class="hljs-number">1</span>){
+                    output.write(bytes, <span class="hljs-number">0</span>, i);
+                    i = fileInputStream.read(bytes, <span class="hljs-number">0</span>, BUFFER_SIZE);
+                }
+            }
+            <span class="hljs-comment">//404错误</span>
+            <span class="hljs-keyword">else</span>{
+                String errorMessage = <span class="hljs-string">"HTTP/1.1 404 File Not Found\r\n"</span> +
+                        <span class="hljs-string">"Content-Type: text/html\r\n"</span> +
+                        <span class="hljs-string">"Content-Length: 23\r\n"</span> +
+                        <span class="hljs-string">"\r\n"</span> +
+                        <span class="hljs-string">"&lt;h1&gt; File Not Found!&lt;/h1&gt;"</span>;
+                output.write(errorMessage.getBytes());
+            }
+        } <span class="hljs-keyword">catch</span> (Exception e) {
+            e.printStackTrace();
+        } <span class="hljs-keyword">finally</span>{
+            <span class="hljs-keyword">if</span>(fileInputStream != <span class="hljs-keyword">null</span>){
+                fileInputStream.close();
+            }
+        }
+
+    }
+
+}</code></pre>
+
+
+
+<h2 id="创建文件indexhtml"><strong>创建文件index.html</strong></h2>
+
+<p>现在需要新建一个文件夹webroot，并且在里面创建一个index.html文件，内容很简单：</p>
+
+
+
+<pre class="prettyprint"><code class="language-html hljs "><span class="hljs-tag">&lt;<span class="hljs-title">html</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-title">head</span>&gt;</span>
+    <span class="hljs-tag">&lt;<span class="hljs-title">title</span>&gt;</span>Welcome to BrainySoftware<span class="hljs-tag">&lt;/<span class="hljs-title">title</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-title">head</span>&gt;</span>
+<span class="hljs-tag">&lt;<span class="hljs-title">body</span>&gt;</span>
+Welcome to BrainySoftware.
+<span class="hljs-tag">&lt;/<span class="hljs-title">body</span>&gt;</span>
+<span class="hljs-tag">&lt;/<span class="hljs-title">html</span>&gt;</span></code></pre>
+
+<p>运行后，在浏览器输入：localhost:8080/index.html，得到结果：</p>
+
+
+
+<pre class="prettyprint"><code class=" hljs fsharp">Welcome <span class="hljs-keyword">to</span> BrainySoftware.</code></pre>
+
+<p>如果输入不存在的文件路径，会返回：</p>
+
+
+
+<pre class="prettyprint"><code class=" hljs mathematica"><span class="hljs-keyword">File</span> <span class="hljs-keyword">Not</span> Found</code></pre>
+
+<hr>
+
+<p>一步一个脚印</p>
+
+<p>本章节完(<em>^__^</em>) </p></div></body>
+</html>

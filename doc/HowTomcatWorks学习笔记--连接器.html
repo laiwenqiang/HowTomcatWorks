@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HowTomcatWorks学习笔记--连接器</title>
+<link rel="stylesheet" href="https://stackedit.io/res-min/themes/base.css" />
+<script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>
+</head>
+<body><div class="container"><blockquote>
+  <p>这本书(How Tomcat Works <a href="https://github.com/laiwenqiang/HowTomcatWorks/blob/master/doc/how%20tomcat%20works中文版.pdf">中文下载地址</a>)之前就看过，然而也就开了个头就废弃了，所以一直耿耿于怀。这次决定重新开始，在此记录一些学习心得和本书的主要知识点。 <br>
+  所有代码也将托管在<a href="https://github.com/laiwenqiang/HowTomcatWorks">GitHub</a>上面。O(∩_∩)O</p>
+</blockquote>
+
+
+
+<h1 id="上节回顾"><strong>上节回顾</strong></h1>
+
+<p>在上一章节中，我们创建了一个安全性相对高一点的Servlet容器。 <br>
+前面的两个章节的内容简单，而且提到概念性的东西也是熟悉的，比如说：</p>
+
+<ol>
+<li><code>ServerSocket</code>、<code>Socket</code>。</li>
+<li><code>ServletRequest</code>、 <code>ServletResponse</code>。</li>
+<li><code>Servlet</code>。</li>
+<li><code>Facade设计模式</code>。</li>
+</ol>
+
+<p>这章节，讨论连接器。相对而言陌生不少。</p>
+
+<hr>
+
+
+
+<h1 id="概要"><strong>概要</strong></h1>
+
+<p><font color="red"><strong>在Tomcat里面，有两个主要的模块：连接器和容器</strong>。</font> <br>
+本章节将会创建一个连接器，用来更好地处理处理请求和相应。 <br>
+这个连接器将会，</p>
+
+<ol>
+<li>解析HTTP请求头部，</li>
+<li>并让Servlet能够获取头部、cookies、参数名/值等信息。在前两章节的程序里面，Servlet是无法获取到请求的信息的，本章已经可以了。</li>
+</ol>
+
+
+
+<h1 id="模块划分"><strong>模块划分</strong></h1>
+
+<p>本章节的程序将划分为三块：</p>
+
+<ol>
+<li>startup启动模块，只有一个类：<code>BootStrap</code>。</li>
+<li>connector模块： <br>
+<ul><li><font color="red">连接器和它的支撑类<code>HttpConnector</code> 和 <code>HttpProcessor</code>。</font></li>
+<li>指代 HTTP 请求的类(HttpRequest)和它的辅助类。</li>
+<li>指代 HTTP 响应的类(HttpResponse)和它的辅助类。</li>
+<li>Facade 类(HttpRequestFacade 和 HttpResponseFacade)。</li>
+<li>Constant 类。 </li></ul></li>
+<li>core模块，由<code>ServletProcessor</code>和<code>StaticResourceProcessor</code>组成。</li>
+</ol>
+
+<p><font color="blue"> <br>
+等待HTTP请求的任务由<code>HttpConnector</code>完成， <br>
+而创建请求和响应对象的工作交给了<code>HttpProcessor</code>实例。 <br>
+当然，解析HTTP请求的工作也是由<code>HttpProcessor</code>完成的。 <br>
+</font></p>
+
+
+
+<h1 id="stringmanager类消息处理工具类"><strong>StringManager类（消息处理工具类）</strong></h1>
+
+<p>简要说一下这个工具类的功能，就是方便输出错误信息。</p>
+
+<ol>
+<li>需要在包下存放属性文件，里面配置错误信息。</li>
+<li>用 <code>StringManager sm = StringManager.getManager("包名称");</code> 获取StringManager实例。</li>
+<li>用<code>sm.getString("错误代号");</code>打印信息。</li>
+</ol>
+
+<p>例如：</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> ServletException(sm.getString(<span class="hljs-string">"httpProcessor.parseHeaders.colon"</span>));</code></pre>
+
+
+
+<h1 id="启动类"><strong>启动类</strong></h1>
+
+<p>程序的入口</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex03.pyrmont.startup;
+
+<span class="hljs-keyword">import</span> com.ex03.pyrmont.connector.http.HttpConnector;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/18.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">BootStartup</span> {</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span>(String[] args) {
+        HttpConnector connector = <span class="hljs-keyword">new</span> HttpConnector();
+        connector.start();
+    }
+}</code></pre>
+
+
+
+<h1 id="httpconnector类"><strong>HttpConnector类</strong></h1>
+
+<p>用于开启Socket接收请求，并且增加了Thread。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex03.pyrmont.connector.http;
+
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.net.InetAddress;
+<span class="hljs-keyword">import</span> java.net.ServerSocket;
+<span class="hljs-keyword">import</span> java.net.Socket;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/18.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">HttpConnector</span> <span class="hljs-keyword">implements</span> <span class="hljs-title">Runnable</span> {</span>
+
+    <span class="hljs-keyword">boolean</span> stopped = <span class="hljs-keyword">false</span>;
+
+    <span class="hljs-keyword">private</span> String scheme = <span class="hljs-string">"http"</span>;
+
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getScheme</span>() {
+        <span class="hljs-keyword">return</span> scheme;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">run</span>() {
+        ServerSocket serverSocket = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">int</span> port = <span class="hljs-number">8080</span>;
+
+        <span class="hljs-keyword">try</span> {
+            serverSocket = <span class="hljs-keyword">new</span> ServerSocket(port, <span class="hljs-number">1</span>, InetAddress.getByName(<span class="hljs-string">"127.0.0.1"</span>));
+        } <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+            System.exit(<span class="hljs-number">1</span>);
+        }
+
+        <span class="hljs-keyword">while</span>(!stopped) {
+            Socket socket = <span class="hljs-keyword">null</span>;
+            <span class="hljs-keyword">try</span> {
+                socket = serverSocket.accept();
+            } <span class="hljs-keyword">catch</span> (IOException e) {
+                e.printStackTrace();
+                <span class="hljs-keyword">continue</span>;
+            }
+
+            HttpProcessor processor = <span class="hljs-keyword">new</span> HttpProcessor(<span class="hljs-keyword">this</span>);
+            processor.process(socket);
+        }
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">start</span>() {
+        Thread thread = <span class="hljs-keyword">new</span> Thread(<span class="hljs-keyword">this</span>);
+        thread.start();
+    }
+}</code></pre>
+
+<p>这个类和前两章的内容很相似。 <br>
+对于HTTP的处理又<code>HttpProcessor</code>完成，入口是<code>process</code>方法。</p>
+
+
+
+<h1 id="httpconnector类-1"><strong>HttpConnector类</strong></h1>
+
+<p><font color="red"><strong>本章节的核心类。</strong></font></p>
+
+<p>这个类由<code>process</code>、<code>parseHeaders</code>、<code>parseRequest</code>、和 <code>normalize</code>方法构成。</p>
+
+
+
+<h2 id="process方法"><strong>process方法</strong></h2>
+
+<p><code>process</code>方法会接收Socket实例， <br>
+1. 创建一个<code>HttpRequest</code>对象和<code>HttpResponse</code>对象。 <br>
+2. 解析HTTP请求，并将它们放到<code>HttpRequest</code>对象中。 <br>
+3. 根据请求的类型，将<code>HttpRequest</code>对象和<code>HttpResponse</code>传送到<code>ServletProcessor</code>/<code>StaticResourceProcessor</code>里。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">process</span>(Socket socket) {
+        SocketInputStream input;
+        OutputStream output;
+
+        <span class="hljs-keyword">try</span> {
+            input = <span class="hljs-keyword">new</span> SocketInputStream(socket.getInputStream(), <span class="hljs-number">2048</span>);
+            output = socket.getOutputStream();
+
+            request = <span class="hljs-keyword">new</span> HttpRequest(input);
+
+            response = <span class="hljs-keyword">new</span> HttpResponse(output);
+            response.setRequest(request);
+            response.setHeader(<span class="hljs-string">"Server"</span>, <span class="hljs-string">"Pyrmont Servlet Container"</span>);
+
+            parseRequest(input, output);
+            parseHeaders(input);
+
+            <span class="hljs-keyword">if</span> (request.getRequestURI().startsWith(<span class="hljs-string">"/servlet/"</span>)) {
+                ServletProcessor processor = <span class="hljs-keyword">new</span> ServletProcessor();
+                processor.process(request, response);
+            } <span class="hljs-keyword">else</span> {
+                StaticResourceProcessor processor = <span class="hljs-keyword">new</span> StaticResourceProcessor();
+                processor.process(request, response);
+            }
+
+            socket.close();
+
+        } <span class="hljs-keyword">catch</span> (Exception e) {
+            e.printStackTrace();
+        }
+}</code></pre>
+
+
+
+<h2 id="parseheaders方法"><strong>parseHeaders方法</strong></h2>
+
+<p>顾名思义，本方法用于解析HTTP请求的头部。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-javadoc">/**
+ * 这个方法只解析
+ * "cookie", "content-length", and "content-type",
+ * 这些字段
+ *<span class="hljs-javadoctag"> @param</span> input
+ *<span class="hljs-javadoctag"> @throws</span> IOException
+ *<span class="hljs-javadoctag"> @throws</span> ServletException
+ */</span>
+<span class="hljs-keyword">private</span> <span class="hljs-keyword">void</span> <span class="hljs-title">parseHeaders</span>(SocketInputStream input)
+        <span class="hljs-keyword">throws</span> IOException, ServletException {
+
+    <span class="hljs-keyword">while</span> (<span class="hljs-keyword">true</span>) {
+        HttpHeader header = <span class="hljs-keyword">new</span> HttpHeader();
+
+        <span class="hljs-comment">// 这里会读取input的数据到header，每次读取一对 name/value。</span>
+        <span class="hljs-comment">// 如果全部读取完成，nameEnd 和 valueEnd 会被设置为 0。</span>
+        input.readHeader(header);
+
+        <span class="hljs-keyword">if</span> (header.nameEnd == <span class="hljs-number">0</span>) {
+            <span class="hljs-keyword">if</span> (header.valueEnd == <span class="hljs-number">0</span>) {
+                <span class="hljs-comment">// 读取完所有数据，返回</span>
+                <span class="hljs-keyword">return</span>;
+            } <span class="hljs-keyword">else</span> {
+                <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> ServletException(sm.getString(<span class="hljs-string">"httpProcessor.parseHeaders.colon"</span>));
+            }
+        }
+
+        String name = <span class="hljs-keyword">new</span> String(header.name, <span class="hljs-number">0</span>, header.nameEnd);
+        String value = <span class="hljs-keyword">new</span> String(header.value, <span class="hljs-number">0</span>, header.valueEnd);
+        request.addHeader(name, value);
+
+        <span class="hljs-comment">// cookie的格式：</span>
+        <span class="hljs-comment">// Cookie: name=value; name2=value2</span>
+        <span class="hljs-keyword">if</span> (name.equals(<span class="hljs-string">"cookie"</span>)) {
+            Cookie cookie[] = RequestUtil.parseCookieHeader(value);
+            <span class="hljs-keyword">for</span> (<span class="hljs-keyword">int</span> i = <span class="hljs-number">0</span>; i &lt; cookie.length; i++) {
+                <span class="hljs-keyword">if</span> (cookie[i].getName().equals(<span class="hljs-string">"jsessionid"</span>)) {
+                    <span class="hljs-keyword">if</span> (!request.isRequestedSessionIdFromCookie()) {
+                        <span class="hljs-comment">// 只有缓存中没有时才会执行</span>
+                        request.setRequestedSessionId(cookie[i].getValue());
+                        request.setRequestedSessionCookie(<span class="hljs-keyword">true</span>);
+                        request.setRequestedSessionURL(<span class="hljs-keyword">false</span>);
+                    }
+                }
+                request.addCookie(cookie[i]);
+            }
+        } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (name.equals(<span class="hljs-string">"content-length"</span>)) {
+            <span class="hljs-keyword">int</span> n = -<span class="hljs-number">1</span>;
+            <span class="hljs-keyword">try</span> {
+                n = Integer.parseInt(value);
+            } <span class="hljs-keyword">catch</span> (NumberFormatException e) {
+                e.printStackTrace();
+                <span class="hljs-keyword">throw</span> <span class="hljs-keyword">new</span> ServletException(sm.getString(<span class="hljs-string">"httpProcessor.parseHeaders.contentLength"</span>));
+            }
+            request.setContentLength(n);
+
+        } <span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (name.equals(<span class="hljs-string">"content-type"</span>)) {
+            request.setContentType(value);
+        }
+    }
+}</code></pre>
+
+
+
+<h1 id="parserequest方法"><strong>parseRequest方法</strong></h1>
+
+<p>用于解析请求，这些解析类其实就是解析字符串，很繁琐。</p>
+
+
+
+<pre class="prettyprint"><code class=" hljs lasso"><span class="hljs-keyword">private</span> <span class="hljs-literal">void</span> parseRequest(SocketInputStream input, OutputStream output) throws IOException, ServletException {
+
+        input<span class="hljs-built_in">.</span>readRequestLine(requestLine);
+        <span class="hljs-built_in">String</span> method <span class="hljs-subst">=</span> <span class="hljs-literal">new</span> <span class="hljs-built_in">String</span>(requestLine<span class="hljs-built_in">.</span>method, <span class="hljs-number">0</span>, requestLine<span class="hljs-built_in">.</span>methodEnd);
+        <span class="hljs-built_in">String</span> uri;
+        <span class="hljs-built_in">String</span> protocol <span class="hljs-subst">=</span> <span class="hljs-literal">new</span> <span class="hljs-built_in">String</span>(requestLine<span class="hljs-built_in">.</span>protocol, <span class="hljs-number">0</span>, requestLine<span class="hljs-built_in">.</span>protocolEnd);
+
+        <span class="hljs-keyword">if</span> (method<span class="hljs-built_in">.</span>length() <span class="hljs-subst">&lt;</span> <span class="hljs-number">1</span>) {
+            throw <span class="hljs-literal">new</span> ServletException(<span class="hljs-string">"Missing HTTP request method"</span>);
+        }
+        <span class="hljs-keyword">if</span> (requestLine<span class="hljs-built_in">.</span>uriEnd <span class="hljs-subst">&lt;</span> <span class="hljs-number">1</span>) {
+            throw <span class="hljs-literal">new</span> ServletException(<span class="hljs-string">"Missing HTTP request uri"</span>);
+        }
+
+        int question <span class="hljs-subst">=</span> requestLine<span class="hljs-built_in">.</span>indexOf(<span class="hljs-string">"?"</span>);
+        <span class="hljs-keyword">if</span> (question <span class="hljs-subst">&gt;=</span> <span class="hljs-number">0</span>) {
+            request<span class="hljs-built_in">.</span>setQueryString(<span class="hljs-literal">new</span> <span class="hljs-built_in">String</span>(requestLine<span class="hljs-built_in">.</span>uri, question <span class="hljs-subst">+</span> <span class="hljs-number">1</span>,
+                    requestLine<span class="hljs-built_in">.</span>uriEnd <span class="hljs-subst">-</span> question <span class="hljs-subst">-</span> <span class="hljs-number">1</span>));
+            uri <span class="hljs-subst">=</span> <span class="hljs-literal">new</span> <span class="hljs-built_in">String</span>(requestLine<span class="hljs-built_in">.</span>uri, <span class="hljs-number">0</span>, question);
+        } <span class="hljs-keyword">else</span> {
+            request<span class="hljs-built_in">.</span>setQueryString(<span class="hljs-built_in">null</span>);
+            uri <span class="hljs-subst">=</span> <span class="hljs-literal">new</span> <span class="hljs-built_in">String</span>(requestLine<span class="hljs-built_in">.</span>uri, <span class="hljs-number">0</span>, requestLine<span class="hljs-built_in">.</span>uriEnd);
+        }
+
+        <span class="hljs-keyword">if</span> (<span class="hljs-subst">!</span>uri<span class="hljs-built_in">.</span>startsWith(<span class="hljs-string">"/"</span>)) {
+            int pos <span class="hljs-subst">=</span> uri<span class="hljs-built_in">.</span>indexOf(<span class="hljs-string">"://"</span>);
+            <span class="hljs-keyword">if</span> (pos <span class="hljs-subst">!=</span> <span class="hljs-subst">-</span><span class="hljs-number">1</span>) {
+                pos <span class="hljs-subst">=</span> uri<span class="hljs-built_in">.</span>indexOf(<span class="hljs-string">'/'</span>, pos <span class="hljs-subst">+</span> <span class="hljs-number">3</span>);
+                <span class="hljs-keyword">if</span> (pos <span class="hljs-subst">==</span> <span class="hljs-subst">-</span><span class="hljs-number">1</span>) {
+                    uri <span class="hljs-subst">=</span> <span class="hljs-string">""</span>;
+                } <span class="hljs-keyword">else</span> {
+                    uri <span class="hljs-subst">=</span> uri<span class="hljs-built_in">.</span>substring(pos);
+                }
+            }
+        }
+
+        <span class="hljs-comment">// 可能会存在如下的uri</span>
+        <span class="hljs-comment">// xxxx.jsp;jsessionid=xxxxx;</span>
+        <span class="hljs-comment">// URL重写功能。为了防止一些用户把Cookie禁止而无法使用session而设置的功能。</span>
+        <span class="hljs-comment">// jsessionid后面的一长串就是你服务器上的session的ID号,这样无需cookie也可以使用session.</span>
+
+        <span class="hljs-built_in">String</span> <span class="hljs-keyword">match</span> <span class="hljs-subst">=</span> <span class="hljs-string">";jsessionid="</span>;
+        int semicolon <span class="hljs-subst">=</span> uri<span class="hljs-built_in">.</span>indexOf(<span class="hljs-keyword">match</span>);
+        <span class="hljs-keyword">if</span> (semicolon <span class="hljs-subst">&gt;</span> <span class="hljs-number">0</span>) {
+            <span class="hljs-built_in">String</span> rest <span class="hljs-subst">=</span> uri<span class="hljs-built_in">.</span>substring(semicolon <span class="hljs-subst">+</span> <span class="hljs-keyword">match</span><span class="hljs-built_in">.</span>length());
+            int semicolon2 <span class="hljs-subst">=</span> rest<span class="hljs-built_in">.</span>indexOf(<span class="hljs-string">';'</span>);
+            <span class="hljs-keyword">if</span> (semicolon2 <span class="hljs-subst">&gt;</span> <span class="hljs-number">0</span>) {
+                request<span class="hljs-built_in">.</span>setRequestedSessionId(rest<span class="hljs-built_in">.</span>substring(<span class="hljs-number">0</span>, semicolon2));
+                rest <span class="hljs-subst">=</span> rest<span class="hljs-built_in">.</span>substring(semicolon2);
+            } <span class="hljs-keyword">else</span> {
+                request<span class="hljs-built_in">.</span>setRequestedSessionId(rest);
+                rest <span class="hljs-subst">=</span> <span class="hljs-string">""</span>;
+            }
+            request<span class="hljs-built_in">.</span>setRequestedSessionURL(<span class="hljs-literal">true</span>);
+            uri <span class="hljs-subst">=</span> uri<span class="hljs-built_in">.</span>substring(<span class="hljs-number">0</span>, semicolon) <span class="hljs-subst">+</span> rest;
+        } <span class="hljs-keyword">else</span> {
+            request<span class="hljs-built_in">.</span>setRequestedSessionURL(<span class="hljs-literal">false</span>);
+            request<span class="hljs-built_in">.</span>setRequestedSessionId(<span class="hljs-built_in">null</span>);
+        }
+
+        <span class="hljs-built_in">String</span> normalizedUri <span class="hljs-subst">=</span> normalize(uri);
+        request<span class="hljs-built_in">.</span>setMethod(method);
+        request<span class="hljs-built_in">.</span>setProtocol(protocol);
+
+        <span class="hljs-keyword">if</span> (normalizedUri <span class="hljs-subst">!=</span> <span class="hljs-built_in">null</span>) {
+            request<span class="hljs-built_in">.</span>setRequestURI(normalizedUri);
+        } <span class="hljs-keyword">else</span> {
+            request<span class="hljs-built_in">.</span>setRequestURI(uri);
+        }
+
+        <span class="hljs-keyword">if</span> (normalizedUri <span class="hljs-subst">==</span> <span class="hljs-built_in">null</span>) {
+            throw <span class="hljs-literal">new</span> ServletException(<span class="hljs-string">"Invalid URI: "</span> <span class="hljs-subst">+</span> uri <span class="hljs-subst">+</span> <span class="hljs-string">"'"</span>);
+        }
+}</code></pre>
+
+
+
+<h2 id="normalize方法"><strong>normalize方法</strong></h2>
+
+<p>这个方法由上面那个方法调用，功能是处理URI地址。没有细看，对于整体理解无大碍。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-javadoc">/**
+ * Return a context-relative path, beginning with a "/", that represents
+ * the canonical version of the specified path after ".." and "." elements
+ * are resolved out.  If the specified path attempts to go outside the
+ * boundaries of the current context (i.e. too many ".." path elements
+ * are present), return &lt;code&gt;null&lt;/code&gt; instead.
+ *
+ *<span class="hljs-javadoctag"> @param</span> path Path to be normalized
+ */</span>
+<span class="hljs-keyword">protected</span> String <span class="hljs-title">normalize</span>(String path) {
+    <span class="hljs-keyword">if</span> (path == <span class="hljs-keyword">null</span>)
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    <span class="hljs-comment">// Create a place for the normalized path</span>
+    String normalized = path;
+
+    <span class="hljs-comment">// Normalize "/%7E" and "/%7e" at the beginning to "/~"</span>
+    <span class="hljs-keyword">if</span> (normalized.startsWith(<span class="hljs-string">"/%7E"</span>) || normalized.startsWith(<span class="hljs-string">"/%7e"</span>))
+        normalized = <span class="hljs-string">"/~"</span> + normalized.substring(<span class="hljs-number">4</span>);
+
+    <span class="hljs-comment">// Prevent encoding '%', '/', '.' and '\', which are special reserved</span>
+    <span class="hljs-comment">// characters</span>
+    <span class="hljs-keyword">if</span> ((normalized.indexOf(<span class="hljs-string">"%25"</span>) &gt;= <span class="hljs-number">0</span>)
+            || (normalized.indexOf(<span class="hljs-string">"%2F"</span>) &gt;= <span class="hljs-number">0</span>)
+            || (normalized.indexOf(<span class="hljs-string">"%2E"</span>) &gt;= <span class="hljs-number">0</span>)
+            || (normalized.indexOf(<span class="hljs-string">"%5C"</span>) &gt;= <span class="hljs-number">0</span>)
+            || (normalized.indexOf(<span class="hljs-string">"%2f"</span>) &gt;= <span class="hljs-number">0</span>)
+            || (normalized.indexOf(<span class="hljs-string">"%2e"</span>) &gt;= <span class="hljs-number">0</span>)
+            || (normalized.indexOf(<span class="hljs-string">"%5c"</span>) &gt;= <span class="hljs-number">0</span>)) {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-keyword">if</span> (normalized.equals(<span class="hljs-string">"/."</span>))
+        <span class="hljs-keyword">return</span> <span class="hljs-string">"/"</span>;
+
+    <span class="hljs-comment">// Normalize the slashes and add leading slash if necessary</span>
+    <span class="hljs-keyword">if</span> (normalized.indexOf(<span class="hljs-string">'\\'</span>) &gt;= <span class="hljs-number">0</span>)
+        normalized = normalized.replace(<span class="hljs-string">'\\'</span>, <span class="hljs-string">'/'</span>);
+    <span class="hljs-keyword">if</span> (!normalized.startsWith(<span class="hljs-string">"/"</span>))
+        normalized = <span class="hljs-string">"/"</span> + normalized;
+
+    <span class="hljs-comment">// Resolve occurrences of "//" in the normalized path</span>
+    <span class="hljs-keyword">while</span> (<span class="hljs-keyword">true</span>) {
+        <span class="hljs-keyword">int</span> index = normalized.indexOf(<span class="hljs-string">"//"</span>);
+        <span class="hljs-keyword">if</span> (index &lt; <span class="hljs-number">0</span>)
+            <span class="hljs-keyword">break</span>;
+        normalized = normalized.substring(<span class="hljs-number">0</span>, index) +
+                normalized.substring(index + <span class="hljs-number">1</span>);
+    }
+
+    <span class="hljs-comment">// Resolve occurrences of "/./" in the normalized path</span>
+    <span class="hljs-keyword">while</span> (<span class="hljs-keyword">true</span>) {
+        <span class="hljs-keyword">int</span> index = normalized.indexOf(<span class="hljs-string">"/./"</span>);
+        <span class="hljs-keyword">if</span> (index &lt; <span class="hljs-number">0</span>)
+            <span class="hljs-keyword">break</span>;
+        normalized = normalized.substring(<span class="hljs-number">0</span>, index) +
+                normalized.substring(index + <span class="hljs-number">2</span>);
+    }
+
+    <span class="hljs-comment">// Resolve occurrences of "/../" in the normalized path</span>
+    <span class="hljs-keyword">while</span> (<span class="hljs-keyword">true</span>) {
+        <span class="hljs-keyword">int</span> index = normalized.indexOf(<span class="hljs-string">"/../"</span>);
+        <span class="hljs-keyword">if</span> (index &lt; <span class="hljs-number">0</span>)
+            <span class="hljs-keyword">break</span>;
+        <span class="hljs-keyword">if</span> (index == <span class="hljs-number">0</span>)
+            <span class="hljs-keyword">return</span> (<span class="hljs-keyword">null</span>);  <span class="hljs-comment">// Trying to go outside our context</span>
+        <span class="hljs-keyword">int</span> index2 = normalized.lastIndexOf(<span class="hljs-string">'/'</span>, index - <span class="hljs-number">1</span>);
+        normalized = normalized.substring(<span class="hljs-number">0</span>, index2) +
+                normalized.substring(index + <span class="hljs-number">3</span>);
+    }
+
+    <span class="hljs-comment">// Declare occurrences of "/..." (three or more dots) to be invalid</span>
+    <span class="hljs-comment">// (on some Windows platforms this walks the directory tree!!!)</span>
+    <span class="hljs-keyword">if</span> (normalized.indexOf(<span class="hljs-string">"/..."</span>) &gt;= <span class="hljs-number">0</span>)
+        <span class="hljs-keyword">return</span> (<span class="hljs-keyword">null</span>);
+
+    <span class="hljs-comment">// Return the normalized path that we have completed</span>
+    <span class="hljs-keyword">return</span> (normalized);
+
+}</code></pre>
+
+
+
+<h1 id="servletprocessor类-和staticresourceprocessor类"><strong>ServletProcessor类 和StaticResourceProcessor类 </strong></h1>
+
+<p>这两个类和之前没有太大变化，在此就不赘述了。</p>
+
+<hr>
+
+<p>一步一个脚印 <br>
+本章完成，(^__^)</p></div></body>
+</html>

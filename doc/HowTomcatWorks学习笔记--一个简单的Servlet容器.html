@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HowTomcatWorks学习笔记--一个简单的Servlet容器</title>
+<link rel="stylesheet" href="https://stackedit.io/res-min/themes/base.css" />
+<script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS_HTML"></script>
+</head>
+<body><div class="container"><blockquote>
+  <p>这本书(How Tomcat Works <a href="https://github.com/laiwenqiang/HowTomcatWorks/blob/master/doc/how%20tomcat%20works中文版.pdf">中文下载地址</a>)之前就看过，然而也就开了个头就废弃了，所以一直耿耿于怀。这次决定重新开始，在此记录一些学习心得和本书的主要知识点。所有代码也将托管在<a href="https://github.com/laiwenqiang/HowTomcatWorks">GitHub</a>上面。O(∩_∩)O</p>
+</blockquote>
+
+
+
+<h1 id="上节回顾"><strong>上节回顾</strong></h1>
+
+<p>在上面一章节<a href="http://blog.csdn.net/laiwenqiang/article/details/72265716">HowTomcatWorks学习笔记–一个简单的Web容器</a>中， <br>
+1. 运用Socket和ServerSocket， <br>
+2. 并且在遵循HTTP协议的规范下，创建了一个简单的Web容器。</p>
+
+<p><font color="red"><strong>该容器的主要工作流程是，</strong></font></p>
+
+<ol>
+<li>用ServerSocket创建服务端，启动8080端口监听请求，</li>
+<li>客户端一旦发送Socket请求，</li>
+<li>解析HTTP Request，获取URI路径。</li>
+<li>依据URI寻找资源，</li>
+<li>如果存在该资源，按照HTTP Response规范返回内容；</li>
+<li>如果不存在，按照HTTP Response规范返回404。</li>
+</ol>
+
+<p>这个容器还抽象出了Request和Response类，用来处理消息。然而，只能返回本地文件内容，不能做业务逻辑处理。并且，我们是用自己的HttpServer这个类来直接操作，显然不符合设计规范。因此，引入Servlet这个概念，用来处理业务逻辑。</p>
+
+<hr>
+
+
+
+<h1 id="概要"><strong>概要</strong></h1>
+
+<p>本章节，主要通过两个程序来开发自己的Servlet容器。 <br>
+1. 第一个简单，用于理解一个Servlet容器的工作原理。 <br>
+2. 第二个稍微复杂。</p>
+
+<hr>
+
+
+
+<h1 id="javaxservletservlet接口"><strong>javax.servlet.Servlet接口 </strong></h1>
+
+<p>谈到Servlet，自然就要运用到<code>javax.servlet.Servlet</code>接口。我们接下来用到的Servlet就要实现这个接口，该接口拥有五个方法。</p>
+
+<ol>
+<li><code>public void init(ServletConfig config) throws ServletException</code></li>
+<li><code>public void service(ServletRequest request, ServletResponse response)  <br>
+     throws ServletException, java.io.IOException</code></li>
+<li><code>public void destroy()</code></li>
+<li><code>public ServletConfig getServletConfig()</code></li>
+<li><code>public java.lang.String getServletInfo()</code></li>
+</ol>
+
+
+
+<h2 id="servlet生命周期"><strong>Servlet生命周期</strong></h2>
+
+<p>一个老生常谈的话题了。 <br>
+简要来说，就是： <br>
+<font color="red">init初始化 —&gt; service处理请求 —&gt; destroy销毁。</font></p>
+
+<p>在处理service请求的时候，<strong>Servlet容器</strong>会传递一个<code>javax.servlet.ServletRequest</code>对象和 <code>javax.servlet.ServletResponse</code> 对象，用来处理请求和相应。在一个Servlet生命周期里，service方法会被多次调用。</p>
+
+<p>当从服务器中移除一个Servlet实例的时候，会调用destroy方法。 <br>
+这通常发生在 servlet 容器正在被关闭或者 servlet 容器需要一些空闲内存的时候。</p>
+
+<p>具体点，就是： <br>
+<font color="red"> <br>
+1. 客户端发送对某个Servlet的请求， <br>
+2. 如果服务器里没有该Servlet实例，会调用该Servlet的init方法进行初始化； <br>
+3. 如果有，init方法不被调用。 <br>
+3. 处理请求，调用service方法。返回结果。 <br>
+4. 如果Servlet容器（服务器）被关闭，或者内存不足，会调用Servlet的destroy方法。 <br>
+</font></p>
+
+<p>这里的PrimitiveServlet类，就是一个很简单的Servlet实例。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-keyword">import</span> javax.servlet.*;
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.PrintWriter;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/17.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">PrimitiveServlet</span> <span class="hljs-keyword">implements</span> <span class="hljs-title">Servlet</span> {</span>
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">init</span>(ServletConfig servletConfig) <span class="hljs-keyword">throws</span> ServletException {
+        System.out.println(<span class="hljs-string">"init"</span>);
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> ServletConfig <span class="hljs-title">getServletConfig</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">service</span>(ServletRequest servletRequest, ServletResponse servletResponse) <span class="hljs-keyword">throws</span> ServletException, IOException {
+        System.out.println(<span class="hljs-string">"from service"</span>);
+        PrintWriter out = servletResponse.getWriter();
+
+        <span class="hljs-comment">//由于浏览器无法解析出相应，故添加如下一段代码。原因未知。</span>
+        String msg = <span class="hljs-string">"HTTP/1.1 200 OK\r\n"</span> +
+                <span class="hljs-string">"Content-Type: text/html\r\n"</span> +
+                <span class="hljs-string">"\r\n"</span>;
+        out.write(msg);
+
+        out.write(<span class="hljs-string">"Hello. Rose are red."</span>);
+        out.write(<span class="hljs-string">"Violets are blue."</span>);
+        out.close();
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getServletInfo</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">destroy</span>() {
+        System.out.println(<span class="hljs-string">"destroy"</span>);
+    }
+}</code></pre>
+
+<hr>
+
+
+
+<h1 id="servlet容器的工作内容"><strong>Servlet容器的工作内容</strong></h1>
+
+<p>对Servlet的操作需要由Servlet容器来完成。<font color="red">Servlet容器的工作内容（和Servlet的生命周期是对应的），</font></p>
+
+<ol>
+<li>当第一次调用Servlet的时候，加载该Servlet并调用init方法。</li>
+<li>对每次请求，都会构造一个<code>javax.servlet.ServletRequest</code>和<code>javax.servlet.ServletResponse</code>。</li>
+<li>调用Servlet的service方法，同时传递ServletRequest和ServletResponse对象。</li>
+<li>当Servlet类被关闭的时候，调用destroy方法并且卸载Servlet类。</li>
+</ol>
+
+
+
+<h1 id="servlet容器的简单版本01"><strong>Servlet容器的简单版本01</strong></h1>
+
+<p>现在创建的这个容器相对简单，很简单。没有实现Servlet容器的所有工作。 <br>
+<font color="blue">我们会发现，它和第一章实现的web服务器很类似，不过现在能够处理本地文件和Servlet。</font>内容是，</p>
+
+<ol>
+<li>等待HTTP请求。</li>
+<li>构造一个ServletRequest和ServletResponse对象。</li>
+<li>如果请求的是一个静态资源（本地文件），调用StaticResourceProcessor实例的process 方法，同时传递 ServletRequest 和 ServletResponse 对象。</li>
+<li>如果请求一个Servlet的话，加载Servlet类并调用service方法，同时传递 ServletRequest 和 ServletResponse 对象。</li>
+</ol>
+
+<p>在这个容器中，每次请求Servlet的时候，都会加载Servlet。（真实情况是只会加载一次）</p>
+
+
+
+<h2 id="创建容器"><strong>创建容器</strong></h2>
+
+<p>和之前的区别就是增加了对请求的判断，</p>
+
+<ol>
+<li>如果URI是以<code>/servlet/</code>开头，则会加载相应的Servlet，调用相应的service方法。</li>
+<li>如果不是，表示请求的是静态资源，读取内容后直接方法。</li>
+</ol>
+
+<p>处理请求的时候，都会传递Request和Response给对应的处理方法。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.InputStream;
+<span class="hljs-keyword">import</span> java.io.OutputStream;
+<span class="hljs-keyword">import</span> java.net.InetAddress;
+<span class="hljs-keyword">import</span> java.net.ServerSocket;
+<span class="hljs-keyword">import</span> java.net.Socket;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/17.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">HttpServer1</span> {</span>
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String SHUTDOWN_COMMAND = <span class="hljs-string">"/SHUTDOWN"</span>;
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">boolean</span> shutdown = <span class="hljs-keyword">false</span>;
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">main</span>(String[] args) {
+        HttpServer1 server = <span class="hljs-keyword">new</span> HttpServer1();
+        server.await();
+    }
+
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">void</span> <span class="hljs-title">await</span>() {
+        ServerSocket serverSocket = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">int</span> port = <span class="hljs-number">8080</span>;
+
+        <span class="hljs-keyword">try</span> {
+            serverSocket = <span class="hljs-keyword">new</span> ServerSocket(port, <span class="hljs-number">1</span>, InetAddress.getByName(<span class="hljs-string">"127.0.0.1"</span>));
+        } <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+            System.exit(<span class="hljs-number">1</span>);
+        }
+
+        <span class="hljs-keyword">while</span> (!shutdown) {
+            Socket socket = <span class="hljs-keyword">null</span>;
+            InputStream inputStream = <span class="hljs-keyword">null</span>;
+            OutputStream outputStream = <span class="hljs-keyword">null</span>;
+
+            <span class="hljs-keyword">try</span> {
+                socket = serverSocket.accept();
+                inputStream = socket.getInputStream();
+                outputStream = socket.getOutputStream();
+
+                Request request = <span class="hljs-keyword">new</span> Request(inputStream);
+                request.parse();
+                Response response = <span class="hljs-keyword">new</span> Response(outputStream);
+                response.setRequest(request);
+
+                <span class="hljs-keyword">if</span>(request.getUri().startsWith(<span class="hljs-string">"/servlet/"</span>)) {
+                    ServletProcessor1 processor = <span class="hljs-keyword">new</span> ServletProcessor1();
+                    processor.process(request, response);
+                } <span class="hljs-keyword">else</span> {
+                    StaticResourceProcessor processor = <span class="hljs-keyword">new</span> StaticResourceProcessor();
+                    processor.process(request, response);
+                }
+
+                socket.close();
+                shutdown = request.getUri().equals(SHUTDOWN_COMMAND);
+
+
+            } <span class="hljs-keyword">catch</span> (IOException e) {
+                e.printStackTrace();
+                System.exit(<span class="hljs-number">1</span>);
+            }
+        }
+    }
+}</code></pre>
+
+
+
+<h2 id="创建请求request"><strong>创建请求Request</strong></h2>
+
+<p>和之前的主要区别就是，</p>
+
+<ol>
+<li>实现了<code>ServletRequest</code>接口。</li>
+</ol>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-keyword">import</span> javax.servlet.RequestDispatcher;
+<span class="hljs-keyword">import</span> javax.servlet.ServletInputStream;
+<span class="hljs-keyword">import</span> javax.servlet.ServletRequest;
+<span class="hljs-keyword">import</span> java.io.BufferedReader;
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.io.InputStream;
+<span class="hljs-keyword">import</span> java.io.UnsupportedEncodingException;
+<span class="hljs-keyword">import</span> java.util.Enumeration;
+<span class="hljs-keyword">import</span> java.util.Locale;
+<span class="hljs-keyword">import</span> java.util.Map;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/17.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Request</span> <span class="hljs-keyword">implements</span> <span class="hljs-title">ServletRequest</span> {</span>
+
+    <span class="hljs-keyword">private</span> InputStream inputStream;
+    <span class="hljs-keyword">private</span> String uri;
+
+    <span class="hljs-keyword">public</span> <span class="hljs-title">Request</span>(InputStream inputStream) {
+        <span class="hljs-keyword">this</span>.inputStream = inputStream;
+    }
+
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getUri</span>() {
+        <span class="hljs-keyword">return</span> uri;
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">parse</span>() {
+        StringBuilder request = <span class="hljs-keyword">new</span> StringBuilder(<span class="hljs-number">2048</span>);
+        <span class="hljs-keyword">int</span> i;
+        <span class="hljs-keyword">byte</span>[] buffer = <span class="hljs-keyword">new</span> <span class="hljs-keyword">byte</span>[<span class="hljs-number">2048</span>];
+        <span class="hljs-keyword">try</span> {
+            i = inputStream.read(buffer);
+        } <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+            <span class="hljs-comment">//i = -1时，下面for循环条件则不会成立。</span>
+            i = -<span class="hljs-number">1</span>;
+        }
+        <span class="hljs-keyword">for</span>(<span class="hljs-keyword">int</span> j=<span class="hljs-number">0</span>; j&lt;i; j++){
+            request.append((<span class="hljs-keyword">char</span>)buffer[j]);
+        }
+        System.out.println(request.toString());
+        uri = parseUri(request.toString());
+    }
+
+    <span class="hljs-comment">//获取Uri</span>
+    <span class="hljs-keyword">private</span> String <span class="hljs-title">parseUri</span>(String requestString){
+        <span class="hljs-keyword">int</span> index1,index2;
+        index1 = requestString.indexOf(<span class="hljs-string">' '</span>);
+        <span class="hljs-keyword">if</span>(index1 != -<span class="hljs-number">1</span>){
+            index2 = requestString.indexOf(<span class="hljs-string">' '</span>, index1 + <span class="hljs-number">1</span>);
+            <span class="hljs-keyword">if</span>(index2 &gt; index1){
+                <span class="hljs-keyword">return</span> requestString.substring(index1 + <span class="hljs-number">1</span>, index2);
+            }
+        }
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> Object <span class="hljs-title">getAttribute</span>(String s) {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> Enumeration <span class="hljs-title">getAttributeNames</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getCharacterEncoding</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setCharacterEncoding</span>(String s) <span class="hljs-keyword">throws</span> UnsupportedEncodingException {
+
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">int</span> <span class="hljs-title">getContentLength</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getContentType</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> ServletInputStream <span class="hljs-title">getInputStream</span>() <span class="hljs-keyword">throws</span> IOException {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getParameter</span>(String s) {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> Enumeration <span class="hljs-title">getParameterNames</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String[] <span class="hljs-title">getParameterValues</span>(String s) {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> String[<span class="hljs-number">0</span>];
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> Map <span class="hljs-title">getParameterMap</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getProtocol</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getScheme</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getServerName</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">int</span> <span class="hljs-title">getServerPort</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> BufferedReader <span class="hljs-title">getReader</span>() <span class="hljs-keyword">throws</span> IOException {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getRemoteAddr</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getRemoteHost</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setAttribute</span>(String s, Object o) {
+
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">removeAttribute</span>(String s) {
+
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> Locale <span class="hljs-title">getLocale</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> Enumeration <span class="hljs-title">getLocales</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">boolean</span> <span class="hljs-title">isSecure</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">false</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> RequestDispatcher <span class="hljs-title">getRequestDispatcher</span>(String s) {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-annotation">@Override</span>
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getRealPath</span>(String s) {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+}</code></pre>
+
+
+
+<h2 id="创建相应response"><strong>创建相应Response</strong></h2>
+
+<p>和Request类似。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-keyword">import</span> javax.servlet.ServletOutputStream;
+<span class="hljs-keyword">import</span> javax.servlet.ServletResponse;
+<span class="hljs-keyword">import</span> java.io.*;
+<span class="hljs-keyword">import</span> java.util.Locale;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/17.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Response</span> <span class="hljs-keyword">implements</span> <span class="hljs-title">ServletResponse</span> {</span>
+
+    <span class="hljs-keyword">private</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> <span class="hljs-keyword">int</span> BUFFER_SIZE = <span class="hljs-number">1024</span>;
+    Request request;
+    OutputStream output;
+    PrintWriter writer;
+
+    <span class="hljs-keyword">public</span> <span class="hljs-title">Response</span>(OutputStream output) {
+        <span class="hljs-keyword">this</span>.output = output;
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setRequest</span>(Request request) {
+        <span class="hljs-keyword">this</span>.request = request;
+    }
+
+    <span class="hljs-comment">/* This method is used to serve a static page */</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">sendStaticResource</span>() <span class="hljs-keyword">throws</span> IOException {
+        <span class="hljs-keyword">byte</span>[] bytes = <span class="hljs-keyword">new</span> <span class="hljs-keyword">byte</span>[BUFFER_SIZE];
+        FileInputStream fis = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">try</span> {
+      <span class="hljs-comment">/* request.getUri has been replaced by request.getRequestURI */</span>
+            File file = <span class="hljs-keyword">new</span> File(Constants.WEB_ROOT, request.getUri());
+            fis = <span class="hljs-keyword">new</span> FileInputStream(file);
+      <span class="hljs-comment">/*
+         HTTP Response = Status-Line
+           *(( general-header | response-header | entity-header ) CRLF)
+           CRLF
+           [ message-body ]
+         Status-Line = HTTP-Version SP Status-Code SP Reason-Phrase CRLF
+      */</span>
+            <span class="hljs-keyword">int</span> ch = fis.read(bytes, <span class="hljs-number">0</span>, BUFFER_SIZE);
+
+            <span class="hljs-comment">//源代码中没有下面这段话，导致请求会出现错误。现在添加。</span>
+            String msg = <span class="hljs-string">"HTTP/1.1 200 OK\r\n"</span> +
+                    <span class="hljs-string">"Content-Type: text/html\r\n"</span> +
+                    <span class="hljs-string">"\r\n"</span>;
+            output.write(msg.getBytes());
+
+            <span class="hljs-keyword">while</span> (ch!=-<span class="hljs-number">1</span>) {
+                output.write(bytes, <span class="hljs-number">0</span>, ch);
+                ch = fis.read(bytes, <span class="hljs-number">0</span>, BUFFER_SIZE);
+            }
+        }
+        <span class="hljs-keyword">catch</span> (FileNotFoundException e) {
+            String errorMessage = <span class="hljs-string">"HTTP/1.1 404 File Not Found\r\n"</span> +
+                    <span class="hljs-string">"Content-Type: text/html\r\n"</span> +
+                    <span class="hljs-string">"Content-Length: 23\r\n"</span> +
+                    <span class="hljs-string">"\r\n"</span> +
+                    <span class="hljs-string">"&lt;h1&gt;File Not Found&lt;/h1&gt;"</span>;
+            output.write(errorMessage.getBytes());
+        }
+        <span class="hljs-keyword">finally</span> {
+            <span class="hljs-keyword">if</span> (fis!=<span class="hljs-keyword">null</span>)
+                fis.close();
+        }
+    }
+
+
+    <span class="hljs-javadoc">/** implementation of ServletResponse  */</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">flushBuffer</span>() <span class="hljs-keyword">throws</span> IOException {
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">int</span> <span class="hljs-title">getBufferSize</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+    }
+
+    <span class="hljs-keyword">public</span> String <span class="hljs-title">getCharacterEncoding</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-keyword">public</span> Locale <span class="hljs-title">getLocale</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-keyword">public</span> ServletOutputStream <span class="hljs-title">getOutputStream</span>() <span class="hljs-keyword">throws</span> IOException {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">null</span>;
+    }
+
+    <span class="hljs-keyword">public</span> PrintWriter <span class="hljs-title">getWriter</span>() <span class="hljs-keyword">throws</span> IOException {
+        <span class="hljs-comment">// autoflush is true, println() will flush,</span>
+        <span class="hljs-comment">// but print() will not.</span>
+        writer = <span class="hljs-keyword">new</span> PrintWriter(output, <span class="hljs-keyword">true</span>);
+        <span class="hljs-keyword">return</span> writer;
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">boolean</span> <span class="hljs-title">isCommitted</span>() {
+        <span class="hljs-keyword">return</span> <span class="hljs-keyword">false</span>;
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">reset</span>() {
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">resetBuffer</span>() {
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setBufferSize</span>(<span class="hljs-keyword">int</span> size) {
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setContentLength</span>(<span class="hljs-keyword">int</span> length) {
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setContentType</span>(String type) {
+    }
+
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">setLocale</span>(Locale locale) {
+    }
+}</code></pre>
+
+
+
+<h2 id="对静态资源的处理"><strong>对静态资源的处理</strong></h2>
+
+<p>这里封装了一个类，调用Response里对静态资源处理的方法。</p>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/17.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">StaticResourceProcessor</span> {</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">process</span>(Request request, Response response) {
+        <span class="hljs-keyword">try</span> {
+            response.sendStaticResource();
+        } <span class="hljs-keyword">catch</span> (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}</code></pre>
+
+
+
+<h2 id="对servlet的处理"><strong>对Servlet的处理</strong></h2>
+
+<p>这里的处理流程是，</p>
+
+<ol>
+<li>解析URI，获取ServletName。</li>
+<li>运用类加载机制，从对应的目录下load进所需的Servlet。</li>
+<li>调用该Servlet的service方法，返回消息。</li>
+</ol>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-keyword">import</span> javax.servlet.Servlet;
+<span class="hljs-keyword">import</span> javax.servlet.ServletException;
+<span class="hljs-keyword">import</span> java.io.File;
+<span class="hljs-keyword">import</span> java.io.IOException;
+<span class="hljs-keyword">import</span> java.net.URL;
+<span class="hljs-keyword">import</span> java.net.URLClassLoader;
+<span class="hljs-keyword">import</span> java.net.URLStreamHandler;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/16.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ServletProcessor1</span> {</span>
+    <span class="hljs-comment">//接收request，处理业务后，返回response</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">void</span> <span class="hljs-title">process</span>(Request request, Response response) {
+
+        <span class="hljs-comment">//1. 获取Servlet的名字</span>
+
+        String uri = request.getUri();
+        <span class="hljs-comment">// 将“/servlet/servletName” 转化为： “servletName”</span>
+        String servletName = uri.substring(uri.lastIndexOf(<span class="hljs-string">"/"</span> ) + <span class="hljs-number">1</span>);
+
+        <span class="hljs-comment">//2. 使用类加载器加载Servlet</span>
+
+        URLClassLoader loader = <span class="hljs-keyword">null</span>;
+        URL[] urls = <span class="hljs-keyword">new</span> URL[<span class="hljs-number">1</span>];
+        URLStreamHandler handler = <span class="hljs-keyword">null</span>;
+        File classPath = <span class="hljs-keyword">new</span> File(Constants.WEB_ROOT);
+
+        <span class="hljs-keyword">try</span> {
+            String repository = (<span class="hljs-keyword">new</span> URL(<span class="hljs-string">"file"</span>, <span class="hljs-keyword">null</span>, classPath.getCanonicalPath() +
+                    File.separator)).toString();
+            urls[<span class="hljs-number">0</span>] = <span class="hljs-keyword">new</span> URL(<span class="hljs-keyword">null</span>, repository, handler);
+            loader = <span class="hljs-keyword">new</span> URLClassLoader(urls);
+
+        } <span class="hljs-keyword">catch</span> (IOException e) {
+            e.printStackTrace();
+        }
+
+        Class myClass = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">try</span> {
+            myClass = loader.loadClass(servletName);
+        } <span class="hljs-keyword">catch</span> (ClassNotFoundException e) {
+            e.printStackTrace();
+        }
+
+        Servlet servlet = <span class="hljs-keyword">null</span>;
+        <span class="hljs-keyword">try</span> {
+            servlet = (Servlet) myClass.newInstance();
+
+            <span class="hljs-comment">//3. 调用Servlet的service方法</span>
+
+            servlet.service(request, response);
+        } <span class="hljs-keyword">catch</span> (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}</code></pre>
+
+
+
+<h2 id="工具类"><strong>工具类</strong></h2>
+
+
+
+<pre class="prettyprint"><code class="language-java hljs "><span class="hljs-keyword">package</span> com.ex02.pyrmont;
+
+<span class="hljs-keyword">import</span> java.io.File;
+
+<span class="hljs-javadoc">/**
+ * Created by laiwenqiang on 2017/5/17.
+ */</span>
+<span class="hljs-keyword">public</span> <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Constants</span> {</span>
+    <span class="hljs-keyword">public</span> <span class="hljs-keyword">static</span> <span class="hljs-keyword">final</span> String WEB_ROOT = System.getProperty(<span class="hljs-string">"user.dir"</span>) + File.separator + <span class="hljs-string">"webroot"</span>;
+}</code></pre>
+
+<hr>
+
+<p>现在，这个容器已经完成。 <br>
+在浏览器中输入入：<a href="http://www.localhost.com:8080/servlet/PrimitiveServlet">http://www.localhost.com:8080/servlet/PrimitiveServlet</a>，得到结果：</p>
+
+
+
+<pre class="prettyprint"><code class=" hljs avrasm">Hello. Rose are red<span class="hljs-preprocessor">.Violets</span> are blue. </code></pre>
+
+<p>输入：<a href="http://localhost:8080/index.html">http://localhost:8080/index.html</a>，得到结果：</p>
+
+
+
+<pre class="prettyprint"><code class=" hljs fsharp">Welcome <span class="hljs-keyword">to</span> BrainySoftware.</code></pre>
+
+<hr>
+
+<p>一步一个脚印</p>
+
+<p>本章未完成，待续(^__^)</p></div></body>
+</html>
