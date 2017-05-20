@@ -74,7 +74,7 @@ public class BootStartup {
 }
 ```
 
-# **HttpConnector类**#
+# **HttpConnector类** #
 用于开启Socket接收请求，并且增加了Thread。
 ``` java
 package com.ex03.pyrmont.connector.http;
@@ -245,7 +245,7 @@ private void parseHeaders(SocketInputStream input)
 
 # **parseRequest方法** #
 用于解析请求，这些解析类其实就是解析字符串，很繁琐。
-```
+``` java
 private void parseRequest(SocketInputStream input, OutputStream output) throws IOException, ServletException {
 
         input.readRequestLine(requestLine);
@@ -406,7 +406,7 @@ protected String normalize(String path) {
 }
 ```
 
-# **ServletProcessor类 和StaticResourceProcessor类 ** #
+# **ServletProcessor类 和StaticResourceProcessor类** #
 
 这两个类和之前没有太大变化，在此就不赘述了。
 
