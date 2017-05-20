@@ -5,9 +5,11 @@
 
 ---
 
-# **HTTP协议**
+# **HTTP协议** #
 （基本上是书上的概念搬过来。）
-##**HTTP Request**
+
+
+## **HTTP Request** ##
 一个HTTP请求，包含三部分：
 1. Method--URI--Protocol/version
 2. Request headers
@@ -41,7 +43,7 @@ URL 实际上是 URI 的一种类型。
 上面的例子中，请求实体是:
 ``` lastName=Franks&firstName=Michael```
 
-##**HTTP Response**
+## **HTTP Response**
 HTTP Response也有三部分，
 1. Protocol--Status Code --Description
 2. Response heads
@@ -65,14 +67,14 @@ Welcome to Brainy Software
 
 ---
 
-#**Socket和ServerSocket**
+# **Socket和ServerSocket**
 Socket类表示一个客户端，而ServerSocket表示一个服务端。连接的流程如下，
 1. 在服务端建立ServerSocket，等待请求。
 2. 一旦请求来，则创建一个Socket连接，进行通信。
 
 ---
 
-#**简陋的web服务器**
+# **简陋的web服务器**
 这里我们创建一个服务器，功能很简单，就是在浏览器上显示几句话。我们用到上面HTTP Response的例子，返回“Welcome to Brainy Software”这句话。
 ``` java
 import java.io.IOException;
@@ -138,9 +140,9 @@ Welcome to Brainy Software
 ```
 ---
 
-#**稍微复杂一点的web服务器**
+# **稍微复杂一点的web服务器**
 这个就是书上的例子，和上面的代码本质上是一样的，区别在于他把请求和相应做了封装。功能上也有所不同，他请求webroot目录下的文件，如果不存在返回404。
-##**创建服务端**
+## **创建服务端**
 ```java
 import java.io.File;
 import java.io.IOException;
@@ -200,7 +202,7 @@ public class HttpServer {
     }
 }
 ```
-##**封装请求**
+## **封装请求**
 ```java
 import java.io.IOException;
 import java.io.InputStream;
@@ -254,7 +256,7 @@ public class Request {
 
 }
 ```
-##**封装相应**
+## **封装相应**
 这个返回Response的类，主要功能在sendStaticResource方法里。原理就是拼接HTTP Response相应。如果存在该文件，则读取文件内容，然后往OutputStream里面放；不存在的话，就返回一个404。
 
 <font color=blue>***我的电脑是mac操作系统，在浏览器上测试会出现异常错误。原因还未知。故添加一个返回的相应头。***</font>
@@ -322,7 +324,7 @@ public class Response {
 
 }
 ```
-##**创建文件index.html**
+## **创建文件index.html**
 现在需要新建一个文件夹webroot，并且在里面创建一个index.html文件，内容很简单：
 ```html
 <html>
