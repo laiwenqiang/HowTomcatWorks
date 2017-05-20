@@ -145,7 +145,7 @@ try {
 }
 
 ```
-##**修改HttpServer** ##
+## **修改HttpServer** ##
 最后，将主程序调用``` ServletProcessor1.java ```的地方修改下即可。
 ``` java
 if(request.getUri().startsWith("/servlet/")) {
