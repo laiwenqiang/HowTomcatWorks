@@ -24,7 +24,7 @@
 
 ---
 
-# **javax.servlet.Servlet接口 **
+# **javax.servlet.Servlet接口**
 
 谈到Servlet，自然就要运用到``` javax.servlet.Servlet ```接口。我们接下来用到的Servlet就要实现这个接口，该接口拥有五个方法。
 
@@ -106,7 +106,7 @@ public class PrimitiveServlet implements Servlet {
 }
 ```
 ---
-# **Servlet容器的工作内容**#
+# **Servlet容器的工作内容** #
 对Servlet的操作需要由Servlet容器来完成。<font color=red>Servlet容器的工作内容（和Servlet的生命周期是对应的），</font>
 
 1. 当第一次调用Servlet的时候，加载该Servlet并调用init方法。
