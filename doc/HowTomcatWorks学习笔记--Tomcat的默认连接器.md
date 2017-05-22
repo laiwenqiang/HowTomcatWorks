@@ -139,7 +139,7 @@ while (curProcessors < minProcessors) {
 ```
 ```  newProcessor ```方法会创建```HttpProcessor```实例。
 
-需要注意的是，它在该过程中会直接调用```HttpProcessor```的run方法。
+需要注意的是，它在该过程中会直接调用```HttpProcessor```的start（这是HttpProcessor类的方法，不是用于启动线程的run方法。总是会被搞混。）方法。
 
 如下：
 
@@ -204,7 +204,7 @@ processor.assign(socket);
 
 对于HTTP请求的具体处理细节，都在```HttpProcessor```中。这里会调用它的```assign```方法。
 
-## HttpProcessor类##
+## HttpProcessor类 ##
 
 下一章节继续。
 
