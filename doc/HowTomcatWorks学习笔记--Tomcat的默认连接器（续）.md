@@ -5,210 +5,149 @@
 
 剖析了Tomcat的```HttpConnector```类。
 
-工作原理梗概：
+工作原理梗概如下：
 
 1. 用工厂模式创建出ServerSocket。
 2. 创建特定数量的HttpProcessor对象池，用于处理Socket请求；
-3. 并且调用HttpProcessor实例的run方法。该run方法会一直等待Socket请求。
+3. 同时，会启动HttpProcessor线程。由于没有请求，所以所有的HttpProcessor都会阻塞在那里。
 4. 调用HttpConnector的run方法，等待Socket请求。
 5. 当请求来临，从对象池中pop出一个HttpProcessor实例。
-6. 调用HttpProcessor的```assign```方法，处理Socket。
+6. 调用HttpProcessor的```assign```方法，将Socket实例传递给HttpProcessor；
+7. 并且，唤醒在HttpProcessor中被阻塞的线程，用于处理Socket请求。
 
 # 概要 #
-主要剖析tomcat的 ``` HttpConnector ``` 和 ``` HttpProcessor ``` 的源代码。
+这里会主要关注```HttpProcessor```异步处理请求的方法。
 
-# 连接器 #
-一个 Tomcat 连接器必须符合以下条件:
-
-1. 必须实现接口``` org.apache.catalina.Connector ```。
-2. 必须创建请求对象，该请求对象的类必须实现接口``` org.apache.catalina.Request ```。
-3. 必须创建响应对象，该响应对象的类必须实现接口 ``` org.apache.catalina.Response ```。
-
-## Connector接口 ##
-指的是``` org.apache.catalina.Connector ```，在这个接口里，最重要的方法是，
-1. ``` getContainer ``` 返回一个容器。
-2. ``` setContainer ``` 设置一个容器。
-3. ``` createRequest ``` 为前来的 HTTP 请求构造一个请求对象。
-4. ``` createResponse ``` 创建一个响应对象。
-
-Connector有很多实现，``` org.apache.catalina.connector.http.HttpConnector ```是其中一个。
-
-## HttpConnector类 #
-
-这个类实现的接口有，Connector、Runnable和Lifecycle。
-``` org.apache.catalina.Lifecycle ```用于维护生命周期。
-
-**在前几章节，我们也实现了自己的HttpConnector类，现在来看一下它和Tomcat的有何不同。**
-
-1. 创建ServerSocket方式不同；
-2. 维护HttpProcessor对象池；
-3. 处理HTTP不同。
-
-### 创建ServerSocket ###
-
-入口是```initialize```方法，会判断是否已经初始化过，没有的话就调用```open```方法。
-
-```initialize```的主要代码如下：
+# HttpProcessor类 #
+在前几个章节中，我们自己写的处理请求的代码是同步的。他必须等待处理完```process```方法，才能接收新的Socket。
 
 ```java
-//...
-if (initialized)
-            throw new LifecycleException (
-                sm.getString("httpConnector.alreadyInitialized"));
-
-        this.initialized=true;
-        Exception eRethrow = null;
-
-        // Establish a server socket on the specified port
+public void run() {
+    ...
+    while (!stopped) {
+        Socket socket = null;
         try {
-            serverSocket = open();
-//...
-```
-
-```open```方法会返回一个ServerSocket实例。它会运用工厂来获取这个实例。主要代码如下：
-
-```java
-// ...
-// Acquire the server socket factory for this Connector
-ServerSocketFactory factory = getFactory();
-
-// If no address is specified, open a connection on all addresses
-if (address == null) {
-  	log(sm.getString("httpConnector.allAddresses"));
-  	try {
-    	return (factory.createSocket(port, acceptCount));
-  	} catch (BindException be) {
-    	throw new BindException(be.getMessage() + ":" + port);
-  	}
+			socket = serversocket.accept(); 
+        }
+        catch (Exception e) {
+            continue;
+		}
+		// Hand this socket off to an Httpprocessor
+       HttpProcessor processor = new Httpprocessor(this);
+ 	   processor.process(socket);
+	} 
 }
-
-// Open a server socket on the specified address
-try {
-  	InetAddress is = InetAddress.getByName(address);
-  	log(sm.getString("httpConnector.anAddress", address));
-  	try {
-    	return (factory.createSocket(port, acceptCount, is));
-// ...      
-```
-*acceptCount表示连接数量，这里默认是10个。可以设置。*
-
-### 维护HttpProcessor线程池 ###
-
-对我之前我们自己的程序，每次只能处理一个HTTP请求。
-
-在默认的连接器中，```HttpConnector```拥有一个```HttpProcessor```对象池，可以处理多个HTTP请求。
-
-对象池是放在```Stack```中的：
-
-```java
-private Stack processors = new Stack();
 ```
 
-创建的HttpProcessor实例数量是可以控制的。
+而Tomcat中，这是异步的。
 
-介绍几个相关的变量：
+## run方法 ##
 
-1. minProcessors，最小的实例数量，默认5个。可以设置。
-2. maxProcessors，最大的实例数量，默认20个。可以设置。
-3. curProcessors，当前对象池中的实例数量。
-
-刚开始的时候，会创建minProcessors个实例。
-
-随着时间推移，当请求的数量大于实例的数量时，会创建更多的实例，直到数量抵达maxProcessors个。
-
-如果请求继续增多，将会被忽略。
-
-在```start```方法中创建（这是HttpConnector类的方法，不是用于启动线程的run方法。总是会被搞混。）：
-
-```java
-//...
-if (started)
-  	throw new LifecycleException
-  	(sm.getString("httpConnector.alreadyStarted"));
-	threadName = "HttpConnector[" + port + "]";
-lifecycle.fireLifecycleEvent(START_EVENT, null);
-started = true;
-
-// Start our background thread
-threadStart();
-
-// Create the specified minimum number of processors
-while (curProcessors < minProcessors) {
-  	if ((maxProcessors > 0) && (curProcessors >= maxProcessors))
-    	break;
-  	HttpProcessor processor = newProcessor();
-  	recycle(processor);
-}
-//...
-```
-```  newProcessor ```方法会创建```HttpProcessor```实例。
-
-需要注意的是，它在该过程中会直接调用```HttpProcessor```的run方法。
-
-如下：
+它的逻辑是，接收Socket，然后处理请求，最后将HttpConnector实例放回到对象池中。
 
 ``` java
-private HttpProcessor newProcessor() {
-    HttpProcessor processor = new HttpProcessor(this, curProcessors++);
-    if (processor instanceof Lifecycle) {
+public void run() {
+    // Process requests until we receive a shutdown signal
+    while (!stopped) {
+        // Wait for the next socket to be assigned
+        Socket socket = await();
+        if (socket == null)
+            continue;
+        // Process the request from this socket
         try {
-            ((Lifecycle) processor).start();
-        } catch (LifecycleException e) {
-            log("newProcessor", e);
-            return (null);
+            process(socket);
+        } catch (Throwable t) {
+            log("process.invoke", t);
+        }
+        // Finish up this request
+        connector.recycle(this);
+    }
+    // Tell threadStop() we have shut ourselves down successfully
+    synchronized (threadSync) {
+        threadSync.notifyAll();
+    }
+}
+```
+
+while方法做循环，很常见。
+
+**在上一章节中我们已经说过，HttpConnector会创建HttpProcessor，并且启动线程的run方法，同时它被放在对象池中，一直阻塞着。**
+
+那么run方法为何会一直阻塞着呢？很简单，因为在while循环中的```await```方法。
+
+## await方法 ##
+
+执行的流程如下：
+
+1. while循环中```available```条件的初始状态是false，表示没有请求。所以它就一直处于```wait```等待状态。
+2. 一旦有请求（在assign方法中，会将available设置为true，并且释放线程锁。await得以调用。），await将会获取线程锁，代码跳出循环得以向下执行。
+3. 然后，它将```available```条件设置为false，通过```notifyAll```释放线程锁，返回Socket实例。
+4. 这样，当前Scoket的await方法就执行完成，返回run方法中。
+5. 在run方法中，继续其他操作。
+
+### 一个问题 ###
+
+这里有个问题值得注意一下，**为何需要调用notifyAll方法，作用是什么，是否多此一举呢？**
+
+书上是这么解释的：
+
+> 为什么 await 需要使用一个本地变量(socket)而不是返回实例的 socket 变量呢?因为这样一来，在当前 socket 被完全处理之前，实例的 socket 变量可以赋给下一个前来的 socket。
+>
+> 为什么 await 方法需要调用 notifyAll 呢? 这是为了防止在 available 为 true 的时候另一 个 socket 到来。在这种情况下，连接器线程将会在 assign 方法的 while 循环中停止，直到接收到处理器线程的 notifyAll 调用。
+
+意思大概就是，一个HttpProcessor实例在同一时间只能处理一个Socket的请求，但是
+
+``` java
+private synchronized Socket await() {
+    // Wait for the Connector to provide a new Socket
+    while (!available) {
+        try {
+            wait();
+        } catch (InterruptedException e) {
         }
     }
-    created.addElement(processor);
-    return (processor);
+    // Notify the Connector that we have received this Socket
+    Socket socket = this.socket;
+    available = false;
+    notifyAll();
+  
+    if ((debug >= 1) && (socket != null))
+        log("  The incoming request has been awaited");
+    return (socket);
 }
 ```
 
-可以看到，如果创建HttpProcessor对象，就会调用```recycle```方法。这个方法的内容可以猜想到，就是把processor放到对象池中。
+## assign方法##
+
+刚刚我们说了，await方法会阻塞。直到assign方法被调用，释放了线程锁，await才得以继续执行。
+
+```assign```方法的作用就是，
+
+1. 接收由HttpConnector传递的Socket实例。
+2. 释放线程锁，让```await```方法得以调用。
+
+```available```属性是false，我们得知。
 
 ``` java
-processors.push(processor);
-```
-
-### 处理HTTP ###
-
-在上面的```start```方法中，有一个用于启动线程的方法：```threadStart```。
-
-该方法会，
-
-1. 调用run方法，创建socket。
-2. 获取HttpProcessor，处理socket。
-
-run方法会执行一个while循环：
-
-``` java
-// ...
-while (!stopped) {
-            // Accept the next incoming connection from the server socket
-            Socket socket = null;
-            try {
-                socket = serverSocket.accept();
-            // ...
-```
-
-而获取HttpProcessor的主要逻辑如下：
-
-``` java
-HttpProcessor processor = createProcessor();
-if (processor == null) {
-    try {
-        log(sm.getString("httpConnector.noProcessor"));
-        socket.close();
-    } catch (IOException e) {
-        ;
+synchronized void assign(Socket socket) {
+    // Wait for the Processor to get the previous Socket
+    while (available) {
+        try {
+            	wait();
+            } catch (InterruptedException e) {
+        }
     }
-    continue;
+    // Store the newly available Socket and notify our thread
+    this.socket = socket;
+    available = true;
+    notifyAll();
+
+    if ((debug >= 1) && (socket != null))
+        log(" An incoming request is being assigned");
 }
-processor.assign(socket);
 ```
 
-对于HTTP请求的具体处理细节，都在```HttpProcessor```中。这里会调用它的```assign```方法。
 
-## HttpProcessor类##
 
 下一章节继续。
 
