@@ -224,9 +224,16 @@ private void parseConnection(Socket socket) throws IOException, ServletException
 
 # 简单的容器
 
-容器用来动态load出Servlet，并且将Request和Response传递给它，并且执行它的service方法。
+容器的作用，
 
-需要实现```org.apache.catalina.Container```接口。
+1. 用来动态load出Servlet，
+2. 并且将Request和Response传递给它，执行它的service方法。
+
+它需要实现```org.apache.catalina.Container```接口。
+
+
+
+现在，我们自己实现一个容器，然后将这个容器传递给```org.apache.catalina.connector.http.HttpConnector```。
 
 代码和之前的很类似，只是从将一些功能从```ServeletProcessor```中分离了出来。
 
@@ -276,6 +283,42 @@ public class SimpleContainer implements Container {
   ...
 } 
 ```
+
+启动类
+
+``` java
+package com.ext04.pyrmont.startup;
+
+import com.ext04.pyrmont.core.SimpleContainer;
+import org.apache.catalina.connector.http.HttpConnector;
+
+
+/**
+ * Created by laiwenqiang on 2017/5/25.
+ */
+public class BootStrap {
+    public static void main(String[] args) {
+        HttpConnector connector = new HttpConnector();
+        SimpleContainer container = new SimpleContainer();
+        connector.setContainer(container);
+
+        try {
+            connector.initialize();
+            connector.start();
+
+            // 加上这句话，防止main方法退出。阻塞在那。
+            System.in.read();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+
+
+打开浏览器，输入```http://localhost:8080/servlet/PrimitiveServlet```，得出结果。
 
 
 
