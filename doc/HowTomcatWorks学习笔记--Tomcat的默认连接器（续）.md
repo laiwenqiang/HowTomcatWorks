@@ -232,8 +232,8 @@ private void parseConnection(Socket socket) throws IOException, ServletException
 
 ```java
 public class SimpleContainer implements Container {
-	public static final String WEB_ROOT = System.getProperty("user.dir") + File.separator + "webroot";
-  	...
+    public static final String WEB_ROOT = System.getProperty("user.dir") + File.separator + "webroot";
+    ...
     public void invoke(Request request, Response response)
     throws IOException, ServletException {
 
