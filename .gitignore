@@ -1,0 +1,8 @@
+
+*.class
+HowTomcatWorks.iml
+
+#out file
+out
+logs
+.idea
